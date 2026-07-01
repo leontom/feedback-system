@@ -1,0 +1,22 @@
+{
+  "name": "feedback-widget-system",
+  "version": "1.0.0",
+  "description": "Self-hosted bug & feedback widget for unlimited sites",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --experimental-sqlite server.js",
+    "dev": "node --experimental-sqlite --watch server.js",
+    "build:css": "tailwindcss -i ./design/tailwind.src.css -o ./public/assets/tailwind.css --minify",
+    "build:css:watch": "tailwindcss -i ./design/tailwind.src.css -o ./public/assets/tailwind.css --watch"
+  },
+  "dependencies": {
+    "express": "^4.22.2"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

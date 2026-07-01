@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Feedback Console</title>
+<link rel="preload" as="font" type="font/woff2" href="/fonts/OpenSauceSans-Regular.woff2" crossorigin />
+<link rel="preload" as="font" type="font/woff2" href="/fonts/OpenSauceSans-SemiBold.woff2" crossorigin />
+<link rel="stylesheet" href="/assets/tailwind.css" />
+<style>[x-cloak]{display:none!important}</style>
+<script>
+function dashboard(){
+  return {
+    authed:false, pw:'', loginErr:'', loggingIn:false,
+    stats:{}, sites:[], reports:[], total:0,
+    site:'all', status:'all', search:'', offset:0, limit:50, loading:false,
+    current:null, currentMeta:{}, detailOpen:false,
+    lightbox:false, lightboxSrc:'',
+    toasts:[], _tid:0, _st:null,
+    statuses:[{k:'all',l:'All'},{k:'new',l:'New'},{k:'open',l:'Open'},{k:'resolved',l:'Resolved'},{k:'archived',l:'Archived'}],
+    catClass:{
+      bug:'bg-red-50 text-red-700 ring-red-600/10',
+      idea:'bg-amber-50 text-amber-700 ring-amber-600/20',
+      feedback:'bg-blue-50 text-blue-700 ring-blue-600/10',
+      other:'bg-zinc-100 text-zinc-600 ring-zinc-500/10'
+    },
+    dotClass:{ all:'', new:'bg-indigo-600', open:'bg-amber-500', resolved:'bg-emerald-500', archived:'bg-zinc-400' },
+    stActive:{
+      new:'bg-indigo-600 text-white ring-indigo-600',
+      open:'bg-amber-500 text-white ring-amber-500',
+      resolved:'bg-emerald-500 text-white ring-emerald-500',
+      archived:'bg-zinc-400 text-white ring-zinc-400'
+    },
+
+    init(){ this.checkSession(); },
+
+    async checkSession(){ try{ const j=await (await fetch('/api/session')).json(); if(j.authenticated){ this.authed=true; this.loadAll(); } }catch(e){} },
+    async login(){ this.loginErr=''; this.loggingIn=true;
+      try{ const r=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:this.pw})});
+        const j=await r.json();
+        if(r.ok){ this.authed=true; this.pw=''; this.loadAll(); } else { this.loginErr=j.error||'That password was not accepted.'; }
+      }catch(e){ this.loginErr='Could not reach the server.'; }
+      this.loggingIn=false;
+    },
+    async logout(){ try{ await fetch('/admin/logout',{method:'POST'}); }catch(e){} location.reload(); },
+
+    get viewTitle(){ return this.site==='all' ? 'All reports' : this.site; },
+
+    async loadAll(){ await Promise.all([this.loadStats(), this.loadSites()]); this.refresh(); },
+    async loadStats(){ try{ this.stats=await (await fetch('/api/stats')).json(); }catch(e){} },
+    async loadSites(){ try{ const d=await (await fetch('/api/sites')).json(); this.sites=d.sites||[]; }catch(e){} },
+    statusCount(k){ return k==='all' ? (this.stats.total||0) : (this.stats[k]||0); },
+
+    _query(){ const p=['limit='+this.limit,'offset='+this.offset];
+      if(this.site!=='all')p.push('site='+encodeURIComponent(this.site));
+      if(this.status!=='all')p.push('status='+encodeURIComponent(this.status));
+      if(this.search)p.push('search='+encodeURIComponent(this.search));
+      return p.join('&'); },
+    async refresh(){ this.offset=0; await this.fetchList(false); },
+    async fetchList(append){ this.loading=true;
+      try{ const d=await (await fetch('/api/reports?'+this._query())).json();
+        this.total=d.total; this.reports = append ? this.reports.concat(d.reports) : d.reports;
+      }catch(e){} this.loading=false; },
+    loadMore(){ this.offset+=this.limit; this.fetchList(true); },
+
+    setSite(s){ this.site=s; this.offset=0; this.refresh(); },
+    setStatus(s){ this.status=s; this.offset=0; this.refresh(); },
+    onSearch(){ clearTimeout(this._st); this._st=setTimeout(()=>this.refresh(), 280); },
+
+    async openDetail(id){
+      try{ const r=await (await fetch('/api/reports/'+id)).json();
+        this.current=r; try{ this.currentMeta = r.meta?JSON.parse(r.meta):{}; }catch(e){ this.currentMeta={}; }
+        this.detailOpen=true;
+        if(r.status==='new'){ this.changeStatus(id,'open',true); }
+      }catch(e){} },
+    closeDetail(){ this.detailOpen=false; },
+
+    async changeStatus(id, st, silent){
+      try{ await fetch('/api/reports/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:st})});
+        const rep=this.reports.find(r=>r.id===id); if(rep) rep.status=st;
+        if(this.current && this.current.id===id) this.current.status=st;
+        this.loadStats(); this.loadSites();
+        if(!silent) this.toast('Marked as '+st);
+      }catch(e){} },
+
+    async del(id){ if(!confirm('Delete this report permanently? This cannot be undone.')) return;
+      try{ await fetch('/api/reports/'+id,{method:'DELETE'}); this.detailOpen=false; this.toast('Report deleted'); this.loadAll(); }catch(e){} },
+
+    openLightbox(src){ this.lightboxSrc=src; this.lightbox=true; },
+    errors(){ return this.currentMeta.errors||[]; },
+
+    toast(msg){ const id=++this._tid; this.toasts.push({id,msg});
+      setTimeout(()=>{ this.toasts=this.toasts.filter(t=>t.id!==id); }, 3200); },
+
+    timeAgo(iso){ if(!iso) return '';
+      const d=new Date(iso.replace(' ','T')+'Z'), s=(Date.now()-d.getTime())/1000;
+      if(s<60)return 'just now'; if(s<3600)return Math.floor(s/60)+'m ago';
+      if(s<86400)return Math.floor(s/3600)+'h ago'; if(s<604800)return Math.floor(s/86400)+'d ago';
+      return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}); },
+    fullDate(iso){ if(!iso) return ''; return new Date(iso.replace(' ','T')+'Z').toLocaleString(); },
+    clock(t){ return (t||'').slice(11,19); }
+  }
+}
+</script>
+</head>
+<body class="h-full bg-zinc-50 text-zinc-600 antialiased" style="font-feature-settings:'kern','liga'">
+<div x-data="dashboard()" x-cloak class="h-full">
+
+  <!-- ============ LOGIN ============ -->
+  <div x-show="!authed" class="fixed inset-0 z-40 flex items-center justify-center bg-zinc-50 px-6">
+    <div class="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-8 shadow-[0_1px_2px_rgba(24,24,27,.04),0_12px_32px_rgba(24,24,27,.08)]">
+      <div class="mb-5 flex items-center gap-3">
+        <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white">
+          <svg viewBox="0 0 16 16" class="h-[18px] w-[18px] fill-current"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H6l-3 3v-3H3a1 1 0 0 1-1-1V3Z"/></svg>
+        </span>
+        <div>
+          <h1 class="text-[17px] font-bold leading-tight tracking-tight text-zinc-900">Feedback Console</h1>
+          <p class="text-[13px] text-zinc-400">Reports from all your sites, one place.</p>
+        </div>
+      </div>
+      <label class="mb-1.5 block text-[13px] font-medium text-zinc-700">Admin password</label>
+      <input x-model="pw" @keydown.enter="login()" type="password" autocomplete="current-password" placeholder="Enter password"
+        class="w-full rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" />
+      <button @click="login()" :disabled="loggingIn"
+        class="mt-3 w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 focus:ring-4 focus:ring-indigo-200 disabled:opacity-60">
+        <span x-show="!loggingIn">Sign in</span><span x-show="loggingIn">Signing in…</span>
+      </button>
+      <p x-show="loginErr" x-text="loginErr" class="mt-3 text-[13px] text-red-600"></p>
+    </div>
+  </div>
+
+  <!-- ============ APP ============ -->
+  <div x-show="authed" class="grid h-full grid-cols-1 md:grid-cols-[248px_1fr]">
+
+    <!-- Sidebar -->
+    <aside class="hidden min-h-0 flex-col border-r border-zinc-200 bg-white md:flex">
+      <div class="flex items-center gap-2.5 px-4 pb-3.5 pt-4">
+        <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
+          <svg viewBox="0 0 16 16" class="h-4 w-4 fill-current"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H6l-3 3v-3H3a1 1 0 0 1-1-1V3Z"/></svg>
+        </span>
+        <h1 class="text-[15px] font-bold tracking-tight text-zinc-900">Feedback</h1>
+      </div>
+      <div class="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
+        <div class="px-2 pb-1.5 pt-3.5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Status</div>
+        <template x-for="s in statuses" :key="s.k">
+          <button @click="setStatus(s.k)" :class="status===s.k ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-zinc-600 hover:bg-zinc-50'"
+            class="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13.5px] transition">
+            <span class="flex items-center gap-2">
+              <span x-show="s.k!=='all'" class="h-[7px] w-[7px] rounded-full" :class="dotClass[s.k]"></span>
+              <span x-text="s.l"></span>
+            </span>
+            <span x-show="statusCount(s.k)" x-text="statusCount(s.k)"
+              :class="status===s.k ? 'bg-white text-indigo-700' : 'bg-zinc-100 text-zinc-400'"
+              class="rounded-full px-2 py-0.5 font-mono text-[11px]"></span>
+          </button>
+        </template>
+
+        <div class="px-2 pb-1.5 pt-4 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Sites</div>
+        <button @click="setSite('all')" :class="site==='all' ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-zinc-600 hover:bg-zinc-50'"
+          class="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13.5px] transition">
+          <span>All sites</span>
+        </button>
+        <template x-for="s in sites" :key="s.site_id">
+          <button @click="setSite(s.site_id)" :class="site===s.site_id ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-zinc-600 hover:bg-zinc-50'"
+            class="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13.5px] transition">
+            <span class="truncate" x-text="s.site_id" :title="s.site_id"></span>
+            <span x-show="s.total"
+              :class="s.unread>0 ? 'bg-indigo-600 text-white' : (site===s.site_id ? 'bg-white text-indigo-700' : 'bg-zinc-100 text-zinc-400')"
+              x-text="s.unread>0 ? s.unread : s.total"
+              class="shrink-0 rounded-full px-2 py-0.5 font-mono text-[11px]"></span>
+          </button>
+        </template>
+      </div>
+      <div class="border-t border-zinc-200 p-2.5">
+        <button @click="logout()" class="w-full rounded-lg border border-zinc-200 px-3 py-2 text-[13px] font-medium text-zinc-600 transition hover:bg-zinc-50">Sign out</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="flex min-w-0 flex-col">
+      <div class="flex items-center gap-3 border-b border-zinc-200 bg-white px-5 py-3">
+        <h2 class="shrink-0 text-[16px] font-bold tracking-tight text-zinc-900" x-text="viewTitle"></h2>
+        <div class="relative max-w-md flex-1">
+          <svg viewBox="0 0 16 16" class="pointer-events-none absolute left-3 top-1/2 h-[15px] w-[15px] -translate-y-1/2 fill-zinc-400"><path d="M11.7 10.3a6 6 0 1 0-1.4 1.4l3 3a1 1 0 0 0 1.4-1.4l-3-3ZM3 7a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z"/></svg>
+          <input x-model="search" @input="onSearch()" type="search" placeholder="Search messages, URLs, emails…"
+            class="w-full rounded-xl border border-zinc-200 bg-zinc-50 py-2 pl-9 pr-3 text-[13.5px] text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-100" />
+        </div>
+        <div x-data="{tt:false}" class="relative" @mouseenter="tt=true" @mouseleave="tt=false">
+          <button @click="loadAll()" class="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-700">
+            <svg viewBox="0 0 16 16" :class="loading && 'animate-spin'" class="h-4 w-4 fill-current"><path d="M13.6 2.7a1 1 0 0 0-1 1V5A6 6 0 1 0 14 8a1 1 0 1 0-2 0 4 4 0 1 1-1.2-2.9H9.3a1 1 0 0 0 0 2h3.3a1 1 0 0 0 1-1V3.7a1 1 0 0 0-1-1Z"/></svg>
+          </button>
+          <div x-show="tt" x-transition.opacity.duration.150ms x-cloak
+            class="absolute right-0 top-11 z-10 whitespace-nowrap rounded-lg bg-zinc-900 px-2.5 py-1.5 text-[12px] font-medium text-white shadow-lg">Refresh</div>
+        </div>
+      </div>
+
+      <!-- List -->
+      <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <div class="mx-auto max-w-3xl">
+
+          <!-- empty -->
+          <div x-show="!reports.length && !loading" class="py-24 text-center">
+            <span class="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-300">
+              <svg viewBox="0 0 16 16" class="h-6 w-6 fill-current"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H6l-3 3v-3H3a1 1 0 0 1-1-1V3Z"/></svg>
+            </span>
+            <div class="mb-1 font-semibold text-zinc-700">Nothing here yet</div>
+            <div class="text-[13.5px] text-zinc-400">Reports from your sites will land in this list.</div>
+          </div>
+
+          <!-- cards -->
+          <template x-for="r in reports" :key="r.id">
+            <button @click="openDetail(r.id)"
+              :class="r.status==='new' && 'border-l-[3px] border-l-indigo-600'"
+              class="group mb-2.5 flex w-full gap-3.5 rounded-xl border border-zinc-200 bg-white p-3.5 text-left transition hover:border-zinc-300 hover:shadow-[0_1px_2px_rgba(24,24,27,.04),0_8px_24px_rgba(24,24,27,.06)]">
+              <img x-show="r.screenshot" :src="'/uploads/'+r.screenshot" loading="lazy" alt=""
+                class="h-[62px] w-[88px] shrink-0 rounded-lg border border-zinc-100 bg-zinc-50 object-cover object-top" />
+              <div class="min-w-0 flex-1">
+                <div class="mb-1.5 flex flex-wrap items-center gap-2">
+                  <span class="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ring-1 ring-inset" :class="catClass[r.category]||catClass.other" x-text="r.category"></span>
+                  <span class="font-mono text-[12px] text-zinc-400" x-text="r.site_id"></span>
+                  <span class="ml-auto shrink-0 text-[12px] text-zinc-400" x-text="timeAgo(r.created_at)"></span>
+                </div>
+                <div x-show="r.message" class="line-clamp-2 text-[14px] text-zinc-800" x-text="r.message"></div>
+                <div x-show="!r.message" class="text-[14px] text-zinc-400">Screenshot only — no description</div>
+                <div class="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400">
+                  <span class="h-[7px] w-[7px] rounded-full" :class="dotClass[r.status]"></span><span x-text="r.status"></span>
+                </div>
+              </div>
+            </button>
+          </template>
+
+          <button x-show="reports.length < total" @click="loadMore()"
+            class="mx-auto mt-1.5 block rounded-xl border border-zinc-200 bg-white px-5 py-2.5 text-[13px] font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50">
+            Load more (<span x-text="total-reports.length"></span> left)
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DETAIL SLIDE-OVER (Pines) ============ -->
+  <div x-show="detailOpen" x-cloak class="fixed inset-0 z-40" @keydown.escape.window="lightbox ? lightbox=false : closeDetail()">
+    <div x-show="detailOpen" x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+      x-transition:leave="ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+      @click="closeDetail()" class="absolute inset-0 bg-zinc-900/40"></div>
+
+    <div x-show="detailOpen" x-transition:enter="transform transition ease-in-out duration-300" x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
+      x-transition:leave="transform transition ease-in-out duration-300" x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full"
+      class="absolute right-0 top-0 flex h-full w-full max-w-[540px] flex-col border-l border-zinc-200 bg-white shadow-[-12px_0_40px_rgba(24,24,27,.12)]">
+      <template x-if="current">
+        <div class="flex h-full flex-col">
+          <!-- head -->
+          <div class="flex items-center gap-2.5 border-b border-zinc-200 px-5 py-4">
+            <span class="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ring-1 ring-inset" :class="catClass[current.category]||catClass.other" x-text="current.category"></span>
+            <span class="font-mono text-[12px] text-zinc-400" x-text="current.site_id"></span>
+            <button @click="closeDetail()" class="ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-zinc-100 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-700">
+              <svg viewBox="0 0 16 16" class="h-[15px] w-[15px] fill-current"><path d="M4.3 4.3a1 1 0 0 1 1.4 0L8 6.6l2.3-2.3a1 1 0 1 1 1.4 1.4L9.4 8l2.3 2.3a1 1 0 0 1-1.4 1.4L8 9.4l-2.3 2.3a1 1 0 0 1-1.4-1.4L6.6 8 4.3 5.7a1 1 0 0 1 0-1.4Z"/></svg>
+            </button>
+          </div>
+          <!-- body -->
+          <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+            <div class="mb-3.5 text-[12px] text-zinc-400">Report #<span x-text="current.id"></span> · <span x-text="fullDate(current.created_at)"></span></div>
+            <div x-show="current.message" class="mb-4 whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-800" x-text="current.message"></div>
+            <div x-show="!current.message" class="mb-4 text-[15px] text-zinc-400">No description was provided.</div>
+
+            <img x-show="current.screenshot" :src="'/uploads/'+current.screenshot" @click="openLightbox('/uploads/'+current.screenshot)"
+              alt="screenshot" class="mb-4 block w-full cursor-zoom-in rounded-xl border border-zinc-200" />
+
+            <div class="mb-2 mt-4 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Environment</div>
+            <dl class="grid grid-cols-[104px_1fr] gap-x-3 gap-y-1.5 text-[13px]">
+              <dt class="text-zinc-400">Page</dt>
+              <dd class="m-0 min-w-0 break-words font-mono text-[12.5px] text-zinc-800">
+                <template x-if="current.page_url"><a :href="current.page_url" target="_blank" rel="noopener" class="text-indigo-600 hover:underline" x-text="current.page_url"></a></template>
+                <span x-show="!current.page_url">—</span>
+              </dd>
+              <dt class="text-zinc-400">Email</dt>
+              <dd class="m-0 min-w-0 break-words font-mono text-[12.5px] text-zinc-800">
+                <template x-if="current.email"><a :href="'mailto:'+current.email" class="text-indigo-600 hover:underline" x-text="current.email"></a></template>
+                <span x-show="!current.email">—</span>
+              </dd>
+              <dt class="text-zinc-400">Viewport</dt><dd class="m-0 font-mono text-[12.5px] text-zinc-800" x-text="current.viewport||'—'"></dd>
+              <dt class="text-zinc-400">Screen</dt><dd class="m-0 font-mono text-[12.5px] text-zinc-800" x-text="current.screen_size||'—'"></dd>
+              <dt class="text-zinc-400">Browser</dt><dd class="m-0 break-words font-mono text-[12.5px] text-zinc-800" x-text="current.user_agent||'—'"></dd>
+              <dt class="text-zinc-400">Origin</dt><dd class="m-0 break-words font-mono text-[12.5px] text-zinc-800" x-text="current.origin||'—'"></dd>
+              <template x-if="currentMeta.platform"><dt class="text-zinc-400">Platform</dt></template><template x-if="currentMeta.platform"><dd class="m-0 font-mono text-[12.5px] text-zinc-800" x-text="currentMeta.platform"></dd></template>
+              <template x-if="currentMeta.language"><dt class="text-zinc-400">Language</dt></template><template x-if="currentMeta.language"><dd class="m-0 font-mono text-[12.5px] text-zinc-800" x-text="currentMeta.language"></dd></template>
+              <template x-if="currentMeta.referrer"><dt class="text-zinc-400">Referrer</dt></template><template x-if="currentMeta.referrer"><dd class="m-0 break-words font-mono text-[12.5px] text-zinc-800" x-text="currentMeta.referrer"></dd></template>
+            </dl>
+
+            <!-- signature: console/error terminal -->
+            <template x-if="errors().length">
+              <div>
+                <div class="mb-2 mt-5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Console &amp; JS errors (<span x-text="errors().length"></span>)</div>
+                <div class="max-h-52 overflow-auto rounded-xl bg-zinc-900 p-3.5 font-mono text-[12px] leading-relaxed text-zinc-300">
+                  <template x-for="(e,i) in errors()" :key="i">
+                    <div class="whitespace-pre-wrap break-words py-[2px]"><span class="text-zinc-500" x-text="clock(e.t)"></span>  <span class="text-red-300" x-text="e.msg"></span></div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+          <!-- foot -->
+          <div class="flex items-center gap-2 border-t border-zinc-200 px-5 py-3.5">
+            <div class="flex flex-1 flex-wrap gap-1.5">
+              <template x-for="s in ['new','open','resolved','archived']" :key="s">
+                <button @click="changeStatus(current.id, s, false)"
+                  :class="current.status===s ? (stActive[s]+' ring-1') : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'"
+                  class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold capitalize transition">
+                  <span class="h-[7px] w-[7px] rounded-full" :class="current.status===s ? 'bg-white/90' : dotClass[s]"></span><span x-text="s"></span>
+                </button>
+              </template>
+            </div>
+            <button @click="del(current.id)" title="Delete report"
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-red-600 ring-1 ring-zinc-200 transition hover:bg-red-50 hover:ring-red-200">
+              <svg viewBox="0 0 16 16" class="h-4 w-4 fill-current"><path d="M6 2h4l.5 1H13a1 1 0 1 1 0 2h-.3l-.6 8.1a1 1 0 0 1-1 .9H4.9a1 1 0 0 1-1-.9L3.3 5H3a1 1 0 0 1 0-2h2.5L6 2Z"/></svg>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ============ LIGHTBOX (Pines modal) ============ -->
+  <div x-show="lightbox" x-cloak x-transition.opacity @click="lightbox=false"
+    class="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-zinc-950/90 p-8">
+    <img :src="lightboxSrc" alt="screenshot" class="max-h-full max-w-full rounded-lg" />
+  </div>
+
+  <!-- ============ TOASTS (Pines) ============ -->
+  <div class="pointer-events-none fixed bottom-5 right-5 z-[60] flex flex-col gap-2">
+    <template x-for="t in toasts" :key="t.id">
+      <div x-transition:enter="transition ease-out duration-300" x-transition:enter-start="translate-y-2 opacity-0" x-transition:enter-end="translate-y-0 opacity-100"
+        x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+        class="pointer-events-auto flex items-center gap-2.5 rounded-xl bg-zinc-900 px-4 py-3 text-[13.5px] font-medium text-white shadow-lg">
+        <svg viewBox="0 0 16 16" class="h-4 w-4 fill-emerald-400"><path d="M6.5 10.6 3.9 8l-1 1 3.6 3.6L14 5.1l-1-1z"/></svg>
+        <span x-text="t.msg"></span>
+      </div>
+    </template>
+  </div>
+
+</div>
+<script defer src="/assets/alpine.min.js"></script>
+</body>
+</html>

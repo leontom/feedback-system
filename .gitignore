@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Local environment / secrets
+.env
+
+# Runtime data (database + uploaded screenshots) — back this folder up separately
+data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS noise
+.DS_Store
+Thumbs.db
